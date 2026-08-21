@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@drawable/bg">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:text="左右倾斜切换音乐"
+        android:textSize="24sp" />
+
+    <TextView
+        android:id="@+id/statusTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="等待传感器启动..."
+        android:textSize="18sp"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- 灵敏度调节（阈值） -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="灵敏度 (阈值，数值越大越不灵敏)"
+        android:textSize="16sp"
+        android:layout_marginBottom="8dp"/>
+
+    <SeekBar
+        android:id="@+id/sensitivitySeekBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="75"
+        android:progress="15"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:id="@+id/sensitivityLabelTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="当前阈值: 2.0"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"/>
+
+    <!-- 新增：防抖间隔时间调节 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="防抖间隔 (秒，防止连续触发)"
+        android:textSize="16sp"
+        android:layout_marginBottom="8dp"/>
+
+    <SeekBar
+        android:id="@+id/debounceSeekBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="25"
+        android:progress="12"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:id="@+id/debounceLabelTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="当前间隔: 1.2 秒"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"/>
+
+    <!-- 方向切换开关 -->
+    <CheckBox
+        android:id="@+id/reverseCheckBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="交换左右方向 (左倾下一曲 / 右倾上一曲)"
+        android:textSize="16sp"
+        android:layout_marginBottom="24dp"/>
+
+    <!-- 服务控制按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/startServiceButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="开启服务" />
+
+        <Button
+            android:id="@+id/stopServiceButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="停止服务" />
+    </LinearLayout>
+</LinearLayout>
