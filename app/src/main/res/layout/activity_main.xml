@@ -21,6 +21,17 @@
         android:text="等待传感器启动..."
         android:textSize="18sp"
         android:gravity="center"
+        android:layout_marginBottom="8dp"/>
+
+    <!-- 实时倾斜角度显示（用于调整灵敏度/防抖） -->
+    <TextView
+        android:id="@+id/tiltAngleTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="实时倾斜: --°"
+        android:textSize="40sp"
+        android:textStyle="bold"
+        android:gravity="center"
         android:layout_marginBottom="16dp"/>
 
     <!-- 灵敏度调节（阈值） -->
@@ -36,14 +47,14 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:max="75"
-        android:progress="15"
+        android:progress="25"
         android:layout_marginBottom="8dp"/>
 
     <TextView
         android:id="@+id/sensitivityLabelTextView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="当前阈值: 2.0"
+        android:text="当前阈值: 3.0"
         android:gravity="center"
         android:layout_marginBottom="24dp"/>
 
@@ -60,14 +71,14 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:max="25"
-        android:progress="12"
+        android:progress="5"
         android:layout_marginBottom="8dp"/>
 
     <TextView
         android:id="@+id/debounceLabelTextView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="当前间隔: 1.2 秒"
+        android:text="当前间隔: 1.0 秒"
         android:gravity="center"
         android:layout_marginBottom="24dp"/>
 

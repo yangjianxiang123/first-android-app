@@ -1,13 +1,15 @@
 package com.miracles.miko; // 替换成你的包名
 
+import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
-import android.media.AudioManager;
+import android.os.Build;
 import android.os.Bundle;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -17,10 +19,16 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
+    private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
+    private static final float GRAVITY = 9.81f;
+    private static final float DISPLAY_FILTER_ALPHA = 0.25f;
+
     private TextView statusTextView;
+    private TextView tiltAngleTextView;
     private TextView sensitivityLabelTextView;
     private SeekBar sensitivitySeekBar;
     private TextView debounceLabelTextView;
@@ -29,23 +37,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private Button startServiceButton;
     private Button stopServiceButton;
 
+    // 仅用于实时角度显示的传感器监听（不影响前台服务里的切歌逻辑）
     private SensorManager sensorManager;
     private Sensor accelerometer;
-
-    private float threshold = 2.0f;
-    private boolean isReversed = false;
-    private long debounceTimeMillis = 1200;
-    // 服务是否处于运行状态
-    private boolean isServiceRunning = false;
-
-    private AudioManager audioManager;
-
-    private long lastTriggerTime = 0;
-
-    // 滤波相关
-    private float smoothedX = 0f;
-    private boolean isFirstSensorRead = true;
-    private static final float FILTER_ALPHA = 0.15f;
+    private float smoothedTiltDegrees = 0f;
+    private boolean isFirstDisplayRead = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,6 +60,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         // 绑定UI组件
         statusTextView = findViewById(R.id.statusTextView);
+        tiltAngleTextView = findViewById(R.id.tiltAngleTextView);
         sensitivityLabelTextView = findViewById(R.id.sensitivityLabelTextView);
         sensitivitySeekBar = findViewById(R.id.sensitivitySeekBar);
         debounceLabelTextView = findViewById(R.id.debounceLabelTextView);
@@ -72,24 +69,18 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         startServiceButton = findViewById(R.id.startServiceButton);
         stopServiceButton = findViewById(R.id.stopServiceButton);
 
-        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-
+        // 获取加速度传感器（仅用于实时显示倾斜角度）
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         if (sensorManager != null) {
             accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            if (accelerometer == null) {
-                statusTextView.setText("设备不支持加速度传感器");
-            }
-        } else {
-            statusTextView.setText("无法获取传感器服务");
         }
 
-        // 灵敏度 SeekBar 监听
+        // 灵敏度 SeekBar 监听（参数实时同步给前台服务）
         sensitivitySeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                threshold = (float) (progress * 0.1 + 0.5);
-                sensitivityLabelTextView.setText(String.format("当前阈值: %.1f", threshold));
+                MusicControlService.threshold = (float) (progress * 0.1 + 0.5);
+                updateSensitivityLabel();
             }
 
             @Override
@@ -98,12 +89,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             public void onStopTrackingTouch(SeekBar seekBar) {}
         });
 
-        // 防抖间隔 SeekBar 监听
+        // 防抖间隔 SeekBar 监听（参数实时同步给前台服务）
         debounceSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 float seconds = (float) (progress * 0.1 + 0.5);
-                debounceTimeMillis = (long) (seconds * 1000);
+                MusicControlService.debounceTimeMillis = (long) (seconds * 1000);
                 debounceLabelTextView.setText(String.format("当前间隔: %.1f 秒", seconds));
             }
 
@@ -113,11 +104,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             public void onStopTrackingTouch(SeekBar seekBar) {}
         });
 
-        // 方向切换监听
+        // 方向切换监听（参数实时同步给前台服务）
         reverseCheckBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                isReversed = isChecked;
+                MusicControlService.isReversed = isChecked;
             }
         });
 
@@ -125,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         startServiceButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                startService();
+                requestNotificationPermissionAndStart();
             }
         });
 
@@ -133,127 +124,128 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         stopServiceButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                stopService();
+                stopMusicService();
             }
         });
 
         // 设置初始显示
-        sensitivityLabelTextView.setText(String.format("当前阈值: %.1f", threshold));
+        updateSensitivityLabel();
         float initSeconds = (float) (debounceSeekBar.getProgress() * 0.1 + 0.5);
-        debounceTimeMillis = (long) (initSeconds * 1000);
+        MusicControlService.debounceTimeMillis = (long) (initSeconds * 1000);
         debounceLabelTextView.setText(String.format("当前间隔: %.1f 秒", initSeconds));
 
         // 默认关闭服务，需用户手动点击“开启服务”
-        stopService();
-    }
-
-    /**
-     * 开启服务：注册加速度传感器监听
-     */
-    private void startService() {
-        if (accelerometer == null) {
-            statusTextView.setText("无法获取加速度传感器");
-            return;
-        }
-        if (isServiceRunning) {
-            statusTextView.setText("服务已在运行中");
-            return;
-        }
-        if (sensorManager != null) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME);
-            isServiceRunning = true;
-            isFirstSensorRead = true;
-            smoothedX = 0f;
-            lastTriggerTime = 0;
-            statusTextView.setText("服务已开启，倾斜切换到音乐...");
-        }
-    }
-
-    /**
-     * 停止服务：注销加速度传感器监听
-     */
-    private void stopService() {
-        if (!isServiceRunning) {
-            statusTextView.setText("服务已停止");
-            return;
-        }
-        if (sensorManager != null) {
-            sensorManager.unregisterListener(this);
-        }
-        isServiceRunning = false;
-        statusTextView.setText("服务已停止");
+        updateServiceUi();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // 服务由“开启服务 / 停止服务”按钮控制。
-        // 若离开了界面，回来时保持原状态：是停止就保持停止，是运行就重新注册。
-        if (isServiceRunning && sensorManager != null && accelerometer != null) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME);
+        updateServiceUi();
+        // 注册传感器用于实时显示（即使服务未开启也能看到角度，方便调参）
+        if (sensorManager != null && accelerometer != null) {
+            isFirstDisplayRead = true;
+            smoothedTiltDegrees = 0f;
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+        } else if (tiltAngleTextView != null) {
+            tiltAngleTextView.setText("实时倾斜: 无加速度传感器");
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        // 离开界面时注销监听（释放资源），但保留 isServiceRunning 状态以便返回时恢复
-        if (sensorManager != null && isServiceRunning) {
+        // 界面不可见时注销显示用监听（前台服务里的监听不受影响）
+        if (sensorManager != null) {
             sensorManager.unregisterListener(this);
         }
     }
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            float rawX = event.values[0];
-
-            if (isFirstSensorRead) {
-                smoothedX = rawX;
-                isFirstSensorRead = false;
-            } else {
-                smoothedX = FILTER_ALPHA * rawX + (1 - FILTER_ALPHA) * smoothedX;
-            }
-
-            statusTextView.setText(String.format("平滑X轴: %.2f", smoothedX));
-
-            long currentTime = System.currentTimeMillis();
-            if (currentTime - lastTriggerTime < debounceTimeMillis) {
-                return;
-            }
-
-            if (isReversed) {
-                if (smoothedX > threshold) {
-                    lastTriggerTime = currentTime;
-                    sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS);
-                    statusTextView.setText("← 上一曲 (右倾)");
-                } else if (smoothedX < -threshold) {
-                    lastTriggerTime = currentTime;
-                    sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT);
-                    statusTextView.setText("→ 下一曲 (左倾)");
-                }
-            } else {
-                if (smoothedX > threshold) {
-                    lastTriggerTime = currentTime;
-                    sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT);
-                    statusTextView.setText("→ 下一曲");
-                } else if (smoothedX < -threshold) {
-                    lastTriggerTime = currentTime;
-                    sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS);
-                    statusTextView.setText("← 上一曲");
-                }
-            }
+        if (event.sensor.getType() != Sensor.TYPE_ACCELEROMETER) {
+            return;
         }
+        float rawX = event.values[0];
+        // X 轴倾斜角（度）：左倾为负，右倾为正
+        float clamped = Math.max(-GRAVITY, Math.min(GRAVITY, rawX));
+        float tiltDegrees = (float) Math.toDegrees(Math.asin(clamped / GRAVITY));
+
+        if (isFirstDisplayRead) {
+            smoothedTiltDegrees = tiltDegrees;
+            isFirstDisplayRead = false;
+        } else {
+            smoothedTiltDegrees = DISPLAY_FILTER_ALPHA * tiltDegrees
+                    + (1 - DISPLAY_FILTER_ALPHA) * smoothedTiltDegrees;
+        }
+        tiltAngleTextView.setText(String.format("实时倾斜: %+.1f°", smoothedTiltDegrees));
     }
 
     @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
 
-    private void sendMediaKey(int keyCode) {
-        if (audioManager == null) return;
-        KeyEvent downEvent = new KeyEvent(KeyEvent.ACTION_DOWN, keyCode);
-        audioManager.dispatchMediaKeyEvent(downEvent);
-        KeyEvent upEvent = new KeyEvent(KeyEvent.ACTION_UP, keyCode);
-        audioManager.dispatchMediaKeyEvent(upEvent);
+    /**
+     * 更新灵敏度标签，同时显示阈值对应的倾斜角度，方便用户对照调整
+     */
+    private void updateSensitivityLabel() {
+        float threshold = MusicControlService.threshold;
+        float clamped = Math.max(-GRAVITY, Math.min(GRAVITY, threshold));
+        double thresholdDegrees = Math.toDegrees(Math.asin(clamped / GRAVITY));
+        sensitivityLabelTextView.setText(String.format("当前阈值: %.1f (倾斜约 %.1f° 触发)", threshold, thresholdDegrees));
+    }
+
+    /**
+     * Android 13+ 需要运行时申请通知权限，否则通知栏常驻通知不会显示
+     */
+    private void requestNotificationPermissionAndStart() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_NOTIFICATION_PERMISSION);
+            return;
+        }
+        startMusicService();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            // 无论用户是否允许通知，都启动前台服务（服务仍会运行，只是通知可能不显示）
+            startMusicService();
+        }
+    }
+
+    /**
+     * 开启前台服务：通知栏常驻保活，后台持续监听传感器
+     */
+    private void startMusicService() {
+        Intent intent = new Intent(this, MusicControlService.class);
+        ContextCompat.startForegroundService(this, intent);
+        updateServiceUi();
+    }
+
+    /**
+     * 停止前台服务
+     */
+    private void stopMusicService() {
+        stopService(new Intent(this, MusicControlService.class));
+        updateServiceUi();
+    }
+
+    /**
+     * 根据服务运行状态刷新界面
+     */
+    private void updateServiceUi() {
+        boolean running = MusicControlService.isRunning;
+        startServiceButton.setEnabled(!running);
+        stopServiceButton.setEnabled(running);
+        if (running) {
+            statusTextView.setText("服务运行中（通知栏常驻），倾斜切换音乐...");
+        } else {
+            statusTextView.setText("服务已停止");
+        }
     }
 }
